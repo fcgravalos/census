@@ -1,8 +1,8 @@
 package backend
 
 import (
+	"context"
 	"os"
-	"time"
 
 	"github.com/fcgravalos/census/collections"
 	log "github.com/sirupsen/logrus"
@@ -22,19 +22,12 @@ func init() {
 	}
 }
 
-type event struct {
-	ID          string
-	timestamp   time.Time
-	eventType   string
-	description string
-}
-
 type Backend interface {
-	GetNodes() ([]collections.Node, error)
-	RegisterNode(node string, nodeData string) error
-	//Watch(prefix string, eventChan chan event) error
-	RegisterService() error
-	GetServices() error
+	GetNodes(ctx context.Context) ([]collections.Node, error)
+	RegisterNode(ctx context.Context, node string, nodeData string) error
+	Watch(ctx context.Context, eventChan chan int)
+	RegisterService(ctx context.Context) error
+	GetServices(ctx context.Context) error
 	Close()
 }
 

@@ -12,12 +12,17 @@ import (
 )
 
 const (
-	backendIdEtcdv3 = "etcdv3"
-	etcdReqTimeout  = 5  // FIXME: should be config
-	maxLeaseTime    = 30 // FIXME: should be config
-	minTimeToWait   = 2 * time.Second
-	maxTimeToWait   = 60 * time.Second
-	nodesNamespace  = "nodes"
+	backendIdEtcdv3   = "etcdv3"
+	etcdReqTimeout    = 5  // FIXME: should be config
+	maxLeaseTime      = 30 // FIXME: should be config
+	minTimeToWait     = 2 * time.Second
+	maxTimeToWait     = 60 * time.Second
+	nodesNamespace    = "nodes"
+	servicesNamespace = "services"
+	noEventCode       = 0
+	nodeEventCode     = 1
+	serviceEventCode  = 2
+	errorEventCode    = -1
 )
 
 type etcdv3 struct {
@@ -26,18 +31,15 @@ type etcdv3 struct {
 	client *clientv3.Client
 }
 
-// FIXME: RegisterNode should probably receive a context
-func (e *etcdv3) RegisterNode(node string, data string) error {
+func (e *etcdv3) RegisterNode(ctx context.Context, node string, data string) error {
 	c := e.client
-	lease, err := c.Grant(context.TODO(), maxLeaseTime)
+	lease, err := c.Grant(ctx, maxLeaseTime)
 
 	if err != nil {
-		logger.Errorf("could'n grant lease for key: %v")
+		logger.Errorf("Could not grant lease for key: %v")
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	_, err = c.Put(ctx, fmt.Sprintf("%s/%s", nodesNamespace, node), data, clientv3.WithLease(lease.ID))
-	cancel()
 
 	if err != nil {
 		logger.Errorf("Could not register node: %v", err)
@@ -46,12 +48,10 @@ func (e *etcdv3) RegisterNode(node string, data string) error {
 	return nil
 }
 
-func (e *etcdv3) GetNodes() ([]collections.Node, error) {
+func (e *etcdv3) GetNodes(ctx context.Context) ([]collections.Node, error) {
 	var nodes []collections.Node
 	c := e.client
-	ctx, cancel := context.WithTimeout(context.Background(), etcdReqTimeout*time.Second)
 	resp, err := c.Get(ctx, nodesNamespace, clientv3.WithPrefix())
-	cancel()
 	if err != nil {
 		logger.Errorf("could not get nodes: %v", err)
 		return nil, err
@@ -67,24 +67,51 @@ func (e *etcdv3) GetNodes() ([]collections.Node, error) {
 	return nodes, nil
 }
 
-/*func (e *etcdv3) Watch(prefix string, eventChan ) {
+func (e *etcdv3) Watch(ctx context.Context, eventChan chan int) {
 	c := e.client
-	go func() {
-		for {
-			ech := c.Watch("nodes")
 
+	nec := c.Watch(ctx, nodesNamespace, clientv3.WithPrefix())    // Nodes Event Channel
+	sec := c.Watch(ctx, servicesNamespace, clientv3.WithPrefix()) // Service Event Channel
+
+	logEvent := func(wresp clientv3.WatchResponse) {
+		for _, ev := range wresp.Events {
+			log.Infof("%s %q : %q", ev.Type, ev.Kv.Key, ev.Kv.Value)
 		}
-	}()
+	}
 
-
+	for {
+		select {
+		case nodeWresp := <-nec:
+			if nodeWresp.Canceled {
+				log.Errorf("Node watch failure: %v", nodeWresp.Err())
+				eventChan <- errorEventCode
+			} else {
+				logEvent(nodeWresp)
+				eventChan <- nodeEventCode
+			}
+		case svcWresp := <-sec:
+			if svcWresp.Canceled {
+				log.Errorf("Service watch failure: %v", svcWresp.Err())
+				eventChan <- errorEventCode
+			} else {
+				logEvent(svcWresp)
+				eventChan <- serviceEventCode
+			}
+		case <-ctx.Done():
+			log.Infoln("Shutting down watcher")
+			return
+		default:
+			eventChan <- noEventCode
+		}
+	}
 }
-*/
-func (e *etcdv3) RegisterService() error {
+
+func (e *etcdv3) RegisterService(ctx context.Context) error {
 	fmt.Println("Registering service")
 	return nil
 }
 
-func (e *etcdv3) GetServices() error {
+func (e *etcdv3) GetServices(ctx context.Context) error {
 	fmt.Println("mysql, redis, nginx")
 	return nil
 }
